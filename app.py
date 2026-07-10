@@ -2,26 +2,17 @@ import os
 import io
 import cv2
 import numpy as np
-from PIL import Image
 from flask import Flask, render_template, request, jsonify
 import tensorflow as tf
 
 app = Flask(__name__)
 
-# ── Paths ───────────────────────────────────────────────
+# ── Config ──────────────────────────────────────────────
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MODEL_PATH = os.path.join(BASE_DIR, "model", "efficientnet_final.keras")
-
-# ── Load Model ──────────────────────────────────────────
-print("Loading model...")
-model = tf.keras.models.load_model(MODEL_PATH)
-print("Model loaded!")
-
-# ── Config ──────────────────────────────────────────────
 CLASS_NAMES = ['2021YC', '2022YC', '2023YC', '2024YC', '2025YC']
 IMG_SIZE = (224, 224)
 
-# ── Year Class to Age Mapping ───────────────────────────
 AGE_LABELS = {
     '2021YC': '5 year fish',
     '2022YC': '4 year fish',
@@ -29,6 +20,18 @@ AGE_LABELS = {
     '2024YC': '2 year fish',
     '2025YC': '1 year fish'
 }
+
+# ── Lazy model loading ──────────────────────────────────
+model = None
+
+def get_model():
+    global model
+    if model is None:
+        print("Loading model from:", MODEL_PATH)
+        print("File exists:", os.path.exists(MODEL_PATH))
+        model = tf.keras.models.load_model(MODEL_PATH)
+        print("Model loaded successfully!")
+    return model
 
 # ── Preprocessing ───────────────────────────────────────
 def preprocess_image(image_bytes):
@@ -56,16 +59,16 @@ def predict():
         return jsonify({'error': 'Empty filename'}), 400
     
     try:
+        m = get_model()
         image_bytes = file.read()
         img_array = preprocess_image(image_bytes)
-        predictions = model.predict(img_array, verbose=0)[0]
+        predictions = m.predict(img_array, verbose=0)[0]
         
         probs = {CLASS_NAMES[i]: float(predictions[i]) for i in range(len(CLASS_NAMES))}
         sorted_probs = sorted(probs.items(), key=lambda x: x[-1], reverse=True)
         
         top1_class, top1_prob = sorted_probs[0]
         
-        # Fish detection threshold
         if top1_prob < 0.40:
             return jsonify({
                 'success': False,
@@ -86,8 +89,9 @@ def predict():
             }
         })
     except Exception as e:
+        import traceback
+        print("ERROR:", traceback.format_exc())
         return jsonify({'error': str(e)}), 500
 
-# ── Run ─────────────────────────────────────────────────
 if __name__ == '__main__':
     app.run(debug=False)
