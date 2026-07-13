@@ -1,5 +1,5 @@
 flask
-tflite-runtime
+tensorflow-cpu
 opencv-python-headless
 pillow
 numpy
