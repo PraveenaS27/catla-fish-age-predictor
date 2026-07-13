@@ -4,4 +4,9 @@ services:
     runtime: python
     pythonVersion: 3.10.12
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn app:app
+    startCommand: gunicorn --timeout 120 --workers 1 --threads 2 app:app
+    envVars:
+      - key: PYTHONUNBUFFERED
+        value: "1"
+      - key: TF_CPP_MIN_LOG_LEVEL
+        value: "2"

@@ -1,14 +1,13 @@
 import os
-import io
 import cv2
 import numpy as np
 from flask import Flask, render_template, request, jsonify
+from tensorflow.keras.applications.efficientnet import preprocess_input
 
 app = Flask(__name__)
 
-# ── Config ──────────────────────────────────────────────
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-MODEL_PATH = os.path.join(BASE_DIR, "model", "efficientnet_final.keras")
+MODEL_PATH = os.path.join(BASE_DIR, "model", "efficientnet_final.tflite")
 CLASS_NAMES = ['2021YC', '2022YC', '2023YC', '2024YC', '2025YC']
 IMG_SIZE = (224, 224)
 
@@ -20,13 +19,17 @@ AGE_LABELS = {
     '2025YC': '1 year fish'
 }
 
-# ── Load Model (once at startup) ────────────────────────
-print("Loading model...")
+print("Loading TFLite model...")
+if not os.path.exists(MODEL_PATH):
+    raise FileNotFoundError(f"Model not found: {MODEL_PATH}")
+
 import tensorflow as tf
-model = tf.keras.models.load_model(MODEL_PATH)
+interpreter = tf.lite.Interpreter(model_path=MODEL_PATH)
+interpreter.allocate_tensors()
+input_details = interpreter.get_input_details()
+output_details = interpreter.get_output_details()
 print("Model loaded!")
 
-# ── Preprocessing ───────────────────────────────────────
 def preprocess_image(image_bytes):
     nparr = np.frombuffer(image_bytes, np.uint8)
     img_bgr = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
@@ -34,10 +37,14 @@ def preprocess_image(image_bytes):
         raise ValueError("Could not decode image")
     img = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
     img = cv2.resize(img, IMG_SIZE)
-    img_array = np.expand_dims(img, axis=0)
-    return img_array
+    img = preprocess_input(img.astype(np.float32))
+    return np.expand_dims(img, axis=0)
 
-# ── Routes ──────────────────────────────────────────────
+def predict_tflite(img_array):
+    interpreter.set_tensor(input_details[0]['index'], img_array)
+    interpreter.invoke()
+    return interpreter.get_tensor(output_details[0]['index'])[0]
+
 @app.route('/')
 def index():
     return render_template('index.html')
@@ -54,10 +61,10 @@ def predict():
     try:
         image_bytes = file.read()
         img_array = preprocess_image(image_bytes)
-        predictions = model.predict(img_array, verbose=0)[0]
+        predictions = predict_tflite(img_array)
         
         probs = {CLASS_NAMES[i]: float(predictions[i]) for i in range(len(CLASS_NAMES))}
-        sorted_probs = sorted(probs.items(), key=lambda x: x[-1], reverse=True)
+        sorted_probs = sorted(probs.items(), key=lambda x: x[1], reverse=True)
         
         top1_class, top1_prob = sorted_probs[0]
         
@@ -68,13 +75,12 @@ def predict():
             })
         
         top2_prob = sorted_probs[1][1] if len(sorted_probs) > 1 else 0
-        top1_age = AGE_LABELS.get(top1_class, top1_class)
         
         return jsonify({
             'success': True,
             'prediction': {
                 'year_class': top1_class,
-                'age_label': top1_age,
+                'age_label': AGE_LABELS.get(top1_class, top1_class),
                 'confidence': round(top1_prob * 100, 2),
                 'top2_confidence': round((top1_prob + top2_prob) * 100, 2),
                 'ranked': [{'class': c, 'age': AGE_LABELS.get(c, c), 'probability': round(p * 100, 2)} for c, p in sorted_probs]
