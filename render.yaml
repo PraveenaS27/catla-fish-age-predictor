@@ -1,0 +1,7 @@
+services:
+  - type: web
+    name: catla-fish-age-predictor
+    runtime: python
+    pythonVersion: 3.10.12
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app
