@@ -9,7 +9,7 @@ app = Flask(__name__)
 
 # ── Config ──────────────────────────────────────────────
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-MODEL_PATH = os.path.join(BASE_DIR, "model", "efficientnet_final.keras")
+MODEL_PATH = os.path.join(BASE_DIR, "model", "efficientnet_final.tflite")
 CLASS_NAMES = ['2021YC', '2022YC', '2023YC', '2024YC', '2025YC']
 IMG_SIZE = (224, 224)
 
@@ -21,17 +21,13 @@ AGE_LABELS = {
     '2025YC': '1 year fish'
 }
 
-# ── Lazy model loading ──────────────────────────────────
-model = None
-
-def get_model():
-    global model
-    if model is None:
-        print("Loading model from:", MODEL_PATH)
-        print("File exists:", os.path.exists(MODEL_PATH))
-        model = tf.keras.models.load_model(MODEL_PATH)
-        print("Model loaded successfully!")
-    return model
+# ── Load TFLite Model ───────────────────────────────────
+print("Loading TFLite model...")
+interpreter = tf.lite.Interpreter(model_path=MODEL_PATH)
+interpreter.allocate_tensors()
+input_details = interpreter.get_input_details()
+output_details = interpreter.get_output_details()
+print("TFLite model loaded!")
 
 # ── Preprocessing ───────────────────────────────────────
 def preprocess_image(image_bytes):
@@ -41,7 +37,7 @@ def preprocess_image(image_bytes):
         raise ValueError("Could not decode image")
     img = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
     img = cv2.resize(img, IMG_SIZE)
-    img_array = np.expand_dims(img, axis=0)
+    img_array = np.expand_dims(img, axis=0).astype(np.float32)
     return img_array
 
 # ── Routes ──────────────────────────────────────────────
@@ -59,10 +55,13 @@ def predict():
         return jsonify({'error': 'Empty filename'}), 400
     
     try:
-        m = get_model()
         image_bytes = file.read()
         img_array = preprocess_image(image_bytes)
-        predictions = m.predict(img_array, verbose=0)[0]
+        
+        # TFLite inference
+        interpreter.set_tensor(input_details[0]['index'], img_array)
+        interpreter.invoke()
+        predictions = interpreter.get_tensor(output_details[0]['index'])[0]
         
         probs = {CLASS_NAMES[i]: float(predictions[i]) for i in range(len(CLASS_NAMES))}
         sorted_probs = sorted(probs.items(), key=lambda x: x[-1], reverse=True)
